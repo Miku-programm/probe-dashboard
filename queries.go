@@ -2,7 +2,7 @@ package main
 
 import "strings"
 
-// 面板使用的命名查询（要求 v2node probe_events 表为 schema_version 2，旧表先执行 v2node 的 migrations/002_v2.sql）。
+// 面板使用的命名查询（要求 v2node probe_events 表为 schema_version 3：v1 表依次执行 v2node 的 migrations/002_v2.sql、003_v3.sql，v2 表执行 003_v3.sql）。
 //
 // 占位符：
 //   - {T}  表名
@@ -10,7 +10,9 @@ import "strings"
 //   - {F}  连接记录去重子查询：每个 flow_id 只取 revision 最大的一行；v1 旧行（flow_id 为空）各自成行
 //   - {NA} “没有关联到 accepted”的条件：auth 不是 accepted 也不是 not_applicable
 //     （包括 v2 的 unknown / rejected 和 v1 的 none）。这只表示没观察到认证成功，不等于主动探测。
-//   - {TLSOK} 只有完整 ClientHello 的 TLS 字段才参与比较（v1 旧行没有 tls_state，按原样保留）
+//   - {TLSOK} 只有完整、无冲突的 ClientHello 的 TLS 字段才参与比较，与 v2node probelog/README「可比较样本的统一门槛」一致：
+//     v3 行要求 tls_state = complete（ClientHello 内有重叠冲突的是 conflict）；v2 行另外排除 reasm_flags 含 conflict 的行
+//     （v2 没有区分冲突落在哪里，保守排除）；v1 旧行没有 tls_state，按原样保留
 //
 // 其余 {name:Type} 是 ClickHouse 查询参数，由 HTTP 接口以 param_name 传入。
 const flowsLatest = `(SELECT * FROM {T}
@@ -20,7 +22,7 @@ const flowsLatest = `(SELECT * FROM {T}
 
 const (
 	noAuth = `auth NOT IN ('accepted', 'not_applicable')`
-	tlsOK  = `(schema_version < 2 OR tls_state = 'complete')`
+	tlsOK  = `(schema_version < 2 OR (tls_state = 'complete' AND (schema_version >= 3 OR position(reasm_flags, 'conflict') = 0)))`
 )
 
 // expandQuery 展开占位符。{F} 内含 {T} 和 {W}，所以先展开
@@ -71,8 +73,8 @@ GROUP BY t ORDER BY t`,
 	"probes": `SELECT ts, node, flow_id, record_type, src_ip, src_port, src_geo, dst_ip, dst_port, node_type, obs_mode,
   ttl, ip_id, tcp_win, tcp_opts, ts_val, syn_retrans, first_data_ms, first_resp_ms,
   payload_len, payload_truncated, round(entropy, 2) AS entropy, round(printable, 2) AS printable, payload_head,
-  prefix_len, prefix_hash, reasm_flags, tls_state, tls_ver, tls_sni, tls_alpn, ja4, tls_sid_len, resp_records,
-  flow_ms, flow_pkts, flow_bytes, flow_end, close_by, handshake, auth, auth_assoc, schema_version
+  prefix_len, prefix_hash, prefix_stop, reasm_flags, tls_state, tls_ver, tls_sni, tls_alpn, ja4, tls_sid_len, resp_records,
+  flow_ms, flow_pkts, flow_bytes, flow_end, close_by, handshake, hs_flags, auth, auth_assoc, schema_version
 FROM {F}
 WHERE kind = 'tcp_flow' AND port_state = 'node' AND {NA} AND position(tcp_flags, 'S') > 0
 ORDER BY ts DESC LIMIT {limit:UInt32}`,
@@ -96,14 +98,17 @@ ORDER BY authed = 0 DESC, unauth DESC LIMIT {limit:UInt32}`,
 FROM {T} WHERE {W} AND kind = 'syn'
 GROUP BY src_ip ORDER BY ports DESC, syns DESC LIMIT {limit:UInt32}`,
 
-	// v2 行用重组后的前缀（prefix_len + prefix_hash），排除内容冲突的流；v1 旧行退回首段哈希
+	// v3 行用固定策略的重组前缀（prefix_len + prefix_hash，覆盖范围见 prefix_stop），排除内容冲突的流。
+	// v2 行的前缀范围取决于 TCP 分段，单独分组、不与 v3 混合；v1 旧行退回首段哈希。短前缀区分度低，看 len 列分层。
 	"replays": `SELECT
-  if(schema_version >= 2, concat(toString(prefix_len), ':', prefix_hash), concat('v1:', payload_hash)) AS match_key,
+  multiIf(schema_version >= 3, concat('v3:', toString(prefix_len), ':', prefix_hash),
+          schema_version = 2, concat('v2:', toString(prefix_len), ':', prefix_hash),
+          concat('v1:', payload_hash)) AS match_key,
   count() AS n, uniqExact(src_ip) AS ips, groupUniqArray(6)(src_ip) AS sample_ips,
   min(ts) AS first_seen, max(ts) AS last_seen, dateDiff('second', min(ts), max(ts)) AS span_s,
   any(if(schema_version >= 2, prefix_len, payload_len)) AS len, any(tls_sni) AS sni, any(dst_port) AS port,
   argMin(src_ip, ts) AS first_src, argMin(auth, ts) AS first_auth, countIf(auth = 'accepted') AS authed,
-  groupUniqArray(4)(src_geo) AS geos
+  groupUniqArray(4)(src_geo) AS geos, groupUniqArray(4)(prefix_stop) AS stops
 FROM {F}
 WHERE if(schema_version >= 2, prefix_hash != '' AND position(reasm_flags, 'conflict') = 0, payload_hash != '')
 GROUP BY match_key HAVING ips > 1
@@ -124,7 +129,7 @@ GROUP BY ttl, tcp_win, tcp_opts, mss, ip_df
 ORDER BY ips DESC, n DESC LIMIT {limit:UInt32}`,
 
 	"payload_len": `SELECT payload_len, count() AS n, uniqExact(src_ip) AS ips,
-  round(avg(entropy), 2) AS entropy, countIf(tls_state = 'complete') AS tls, countIf(payload_truncated = 1) AS truncated
+  round(avg(entropy), 2) AS entropy, countIf(tls_state = 'complete' AND {TLSOK}) AS tls, countIf(payload_truncated = 1) AS truncated
 FROM {F}
 WHERE kind = 'tcp_flow' AND port_state = 'node' AND {NA} AND position(tcp_flags, 'S') > 0
 GROUP BY payload_len ORDER BY payload_len`,
@@ -188,8 +193,8 @@ ORDER BY ts DESC LIMIT {limit:UInt32}`,
 
 	// IP 查询保留同一连接的所有记录（snapshot / final / correction），便于看演变
 	"ip": `SELECT ts, node, kind, flow_id, record_type, revision, proto, src_port, dst_ip, dst_port, port_state,
-  auth, auth_assoc, flow_end, close_by, handshake, flow_ms, flow_pkts,
-  payload_len, round(entropy, 2) AS entropy, tls_state, tls_sni, ja4, prefix_len, reasm_flags, ttl, tcp_win, tcp_opts, ts_val,
+  auth, auth_assoc, flow_end, close_by, handshake, hs_flags, flow_ms, flow_pkts,
+  payload_len, round(entropy, 2) AS entropy, tls_state, tls_sni, ja4, prefix_len, prefix_stop, reasm_flags, ttl, tcp_win, tcp_opts, ts_val,
   first_data_ms, payload_head, xray_status, xray_email, xray_target, xray_reason, schema_version
 FROM {T} WHERE {W} AND src_ip = {ip:String}
 ORDER BY ts DESC, revision DESC LIMIT {limit:UInt32}`,
