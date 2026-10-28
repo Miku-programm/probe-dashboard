@@ -65,6 +65,18 @@ func TestQueryParamsProvided(t *testing.T) {
 	}
 }
 
+// 展开后不应残留面板自己的占位符
+func TestExpandQuery(t *testing.T) {
+	for name, q := range queries {
+		e := expandQuery(q, "`db`.`t`", "ts > 0")
+		for _, ph := range []string{"{T}", "{W}", "{F}", "{NA}", "{TLSOK}"} {
+			if strings.Contains(e, ph) {
+				t.Errorf("query %s still contains %s", name, ph)
+			}
+		}
+	}
+}
+
 func TestStaticEmbedded(t *testing.T) {
 	for _, f := range []string{"static/index.html", "static/app.js", "static/style.css"} {
 		if _, err := staticFiles.ReadFile(f); err != nil {

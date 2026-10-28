@@ -156,13 +156,13 @@ const SERIES_COLORS = {
 async function loadTimeline() {
   const rows = await q("timeline");
   const series = [
-    ["unauth_node", "未认证流(节点端口)"],
-    ["unauth_other", "未认证流(其他监听端口)"],
+    ["unauth_node", "未关联认证(节点端口)"],
+    ["unauth_other", "其他监听端口连接"],
     ["scan_syn", "关闭端口 SYN"],
     ["rejected", "xray 拒绝"],
     ["udp", "UDP 流"],
     ["icmp", "ICMP"],
-    ["authed", "已认证流"],
+    ["authed", "已认证连接"],
   ];
   const opt = baseOption();
   opt.xAxis.type = "time";
@@ -183,7 +183,7 @@ async function loadTimeline() {
     areaStyle: k === "unauth_node" ? { opacity: 0.15 } : undefined,
     data: rows.map((r) => [new Date(String(r.t).replace(" ", "T") + "Z"), r[k]]),
   }));
-  opt.legend.selected = { "已认证流": false, ICMP: false };
+  opt.legend.selected = { "已认证连接": false, ICMP: false };
   chart($("#timeline")).setOption(opt, true);
 }
 
@@ -202,11 +202,11 @@ function barChart(el, rows, xKey, series, xName) {
 async function loadKPIs() {
   const [o] = await q("overview");
   const items = [
-    ["未认证节点流", o.unauth_node_flows, `${fmtNum(o.unauth_sources)} 个来源`, "danger"],
+    ["未关联认证的节点连接", o.unauth_node_flows, `${fmtNum(o.unauth_sources)} 个来源`, "danger"],
     ["关闭端口 SYN", o.closed_syn, `${fmtNum(o.scanners)} 个扫描源`, "warn"],
-    ["中国来源未认证事件", o.cn_unauth, "SYN / 未认证 TCP / UDP", "danger"],
+    ["中国来源（SYN + 未关联认证）", o.cn_unauth, "只是地区标签，不是归因", "danger"],
     ["xray 拒绝", o.rejected, `REALITY 日志 ${fmtNum(o.reality_logs)}`, "warn"],
-    ["已认证流", o.authed_flows, "按采样率记录", "ok"],
+    ["已认证连接", o.authed_flows, `关联歧义 ${fmtNum(o.ambiguous_flows)}`, "ok"],
     ["关闭端口 UDP", o.udp_closed, "", ""],
     ["事件总数", o.events, `${fmtNum(o.sources)} 个来源 IP`, ""],
   ];
@@ -227,22 +227,26 @@ const TABS = [
     title: "探测流量",
     async render(p) {
       p.innerHTML =
-        section("来源汇总", "按来源 IP 聚合未认证的 TCP 流。“已认证=0”的来源从未成功使用节点，最可能是探测器；有已认证记录的多半是用户的失败连接。", '<div id="t1"></div>') +
-        section("明细", "每条未认证流的 SYN 指纹、首包特征与结束方式。首包十六进制可悬停查看，first_ms 为 SYN 到首个数据包的毫秒数。", '<div id="t2"></div>');
+        section("来源汇总", "按来源 IP 聚合到节点端口、没有关联到 accepted 的连接（每个连接只取最新记录）。“未关联认证”只表示没观察到认证成功——正常访问、健康检查、日志缺失都会落在这里，不等于主动探测。“已认证=0”的来源值得优先排查。", '<div id="t1"></div>') +
+        section("明细", "TLS 字段只在 tls_state=complete 时可信；reasm 为重组质量标记，close/握手只表示采集器看到了什么。first_ms 为 SYN 到首个数据段的毫秒数。", '<div id="t2"></div>');
       const [src, rows] = await Promise.all([q("probe_sources"), q("probes", { limit: 500 })]);
       renderTable($("#t1"), src, [
-        ["src_ip", "来源", "ip"], ["geo", "地区", "badge"], ["unauth", "未认证", "num"], ["authed", "已认证", "num"],
-        ["ports", "端口数", "num"], ["no_data", "无数据", "num"], ["lens", "首包长度", "list"], ["snis", "SNI", "list"],
+        ["src_ip", "来源", "ip"], ["geo", "地区", "badge"], ["unauth", "未关联认证", "num"], ["authed", "已认证", "num"],
+        ["ambiguous", "歧义", "num"], ["ports", "端口数", "num"], ["no_data", "无数据", "num"], ["lens", "首包长度", "list"], ["snis", "SNI", "list"],
         ["ttl", "TTL", "num"], ["opts", "TCP 选项", "mono"], ["nodes", "节点", "list"],
         ["first_seen", "首次", "time"], ["last_seen", "最近", "time"],
       ]);
       renderTable($("#t2"), rows, [
         ["ts", "时间", "time"], ["src_ip", "来源", "ip"], ["src_geo", "地区", "badge"], ["node", "节点"], ["dst_port", "端口", "num"],
-        ["port_state", "端口", "badge"], ["node_type", "类型"], ["flow_end", "结束"], ["flow_ms", "时长ms", "num"],
-        ["first_data_ms", "first_ms", "ms"], ["payload_len", "首包", "num"], ["entropy", "熵", "num"], ["printable", "可打印", "num"],
-        ["tls_sni", "SNI"], ["tls_ver", "TLS"], ["ja4", "JA4", "mono"], ["tls_sid_len", "SID", "num"], ["payload_head", "首包 hex", "hex"],
-        ["payload_head", "ASCII", "ascii"], ["ttl", "TTL", "num"], ["ip_id", "IPID", "num"], ["tcp_win", "窗口", "num"], ["tcp_opts", "TCP 选项", "mono"],
+        ["node_type", "类型"], ["auth", "认证", "badge"], ["auth_assoc", "关联", "badge"], ["record_type", "记录"],
+        ["flow_end", "结束"], ["close_by", "关闭方向"], ["handshake", "握手"], ["flow_ms", "时长ms", "num"],
+        ["first_data_ms", "first_ms", "ms"], ["first_resp_ms", "resp_ms", "ms"], ["payload_len", "首段", "num"], ["payload_truncated", "截断", "num"],
+        ["entropy", "熵", "num"], ["printable", "可打印", "num"], ["tls_state", "TLS 状态"], ["tls_sni", "SNI"], ["tls_ver", "TLS"],
+        ["ja4", "JA4", "mono"], ["tls_sid_len", "SID", "num"], ["prefix_len", "前缀", "num"], ["reasm_flags", "重组"],
+        ["resp_records", "响应 record", "mono"], ["payload_head", "首段 hex", "hex"], ["payload_head", "ASCII", "ascii"],
+        ["ttl", "TTL", "num"], ["ip_id", "IPID", "num"], ["tcp_win", "窗口", "num"], ["tcp_opts", "TCP 选项", "mono"],
         ["ts_val", "TSval", "num"], ["syn_retrans", "SYN重传", "num"], ["flow_pkts", "包", "num"], ["flow_bytes", "字节", "num"],
+        ["obs_mode", "观测"], ["flow_id", "flow_id", "mono"],
       ]);
     },
   },
@@ -270,12 +274,12 @@ const TABS = [
     title: "重放检测",
     async render(p) {
       p.innerHTML = section(
-        "首包重放",
-        "同一首包（sha256）出现在多个来源 IP 上。如果第一次出现是已认证的用户连接、之后来自其他 IP，就是典型的重放探测。",
+        "相同客户端前缀",
+        "同一段重组后的客户端字节流前缀（长度:哈希）出现在多个来源 IP 上，已排除内容冲突的流；v1 旧数据退回首段哈希（v1: 前缀）。这只是候选匹配，不能单凭它证明来源身份或重放因果。",
         '<div id="t1"></div>'
       );
       renderTable($("#t1"), await q("replays"), [
-        ["payload_hash", "首包哈希", "mono"], ["n", "次数", "num"], ["ips", "IP 数", "num"], ["first_src", "首个来源", "ip"],
+        ["match_key", "前缀长度:哈希", "mono"], ["n", "次数", "num"], ["ips", "IP 数", "num"], ["first_src", "首个来源", "ip"],
         ["first_auth", "首次认证", "badge"], ["authed", "已认证次数", "num"], ["sample_ips", "来源样例", "ips"], ["geos", "地区", "list"],
         ["len", "长度", "num"], ["sni", "SNI"], ["port", "端口", "num"], ["span_s", "跨度秒", "num"],
         ["first_seen", "首次", "time"], ["last_seen", "最近", "time"],
@@ -371,9 +375,12 @@ const TABS = [
         }
         $("#t1").innerHTML = '<div class="loading">查询中…</div>';
         renderTable($("#t1"), await q("ip", { ip: state.ip, limit: 1000 }), [
-          ["ts", "时间", "time"], ["node", "节点"], ["kind", "类型"], ["proto", "协议"], ["src_port", "源端口", "num"], ["dst_port", "端口", "num"],
-          ["port_state", "端口", "badge"], ["auth", "认证", "badge"], ["flow_end", "结束"], ["flow_ms", "时长ms", "num"], ["payload_len", "首包", "num"],
-          ["entropy", "熵", "num"], ["tls_sni", "SNI"], ["ja4", "JA4", "mono"], ["ttl", "TTL", "num"], ["tcp_win", "窗口", "num"],
+          ["ts", "时间", "time"], ["node", "节点"], ["kind", "类型"], ["flow_id", "flow_id", "mono"], ["record_type", "记录"], ["revision", "rev", "num"],
+          ["proto", "协议"], ["src_port", "源端口", "num"], ["dst_ip", "本地地址"], ["dst_port", "端口", "num"],
+          ["port_state", "端口", "badge"], ["auth", "认证", "badge"], ["auth_assoc", "关联", "badge"], ["flow_end", "结束"], ["close_by", "关闭方向"],
+          ["handshake", "握手"], ["flow_ms", "时长ms", "num"], ["payload_len", "首段", "num"],
+          ["entropy", "熵", "num"], ["tls_state", "TLS 状态"], ["tls_sni", "SNI"], ["ja4", "JA4", "mono"], ["prefix_len", "前缀", "num"],
+          ["reasm_flags", "重组"], ["ttl", "TTL", "num"], ["tcp_win", "窗口", "num"],
           ["tcp_opts", "TCP 选项", "mono"], ["ts_val", "TSval", "num"], ["first_data_ms", "first_ms", "ms"], ["payload_head", "首包 hex", "hex"],
           ["xray_status", "xray", "badge"], ["xray_email", "用户"], ["xray_target", "目标"], ["xray_reason", "原因", "wrap"],
         ], { empty: "这个时间范围内没有该 IP 的事件" });
@@ -419,8 +426,13 @@ const TABS = [
         return { node: r.node, last_seen: r.last_seen, ...s };
       });
       renderTable($("#t1"), rows, [
-        ["node", "节点"], ["last_seen", "最近上报", "time"], ["capture", "抓包"], ["packets", "抓包数", "num"], ["emitted", "事件", "num"],
-        ["flows", "当前流", "num"], ["rate_dropped", "限速丢弃", "num"], ["sampled_out", "采样丢弃", "num"], ["parse_errors", "解析错误", "num"],
+        ["node", "节点"], ["last_seen", "最近上报", "time"], ["direction", "观测"], ["capture", "抓包"], ["sink_schema", "表结构", "wrap"],
+        ["packets", "抓包数", "num"], ["kernel_drops", "内核丢包"], ["emitted", "事件", "num"], ["flows", "当前流", "num"],
+        ["rate_dropped", "限速丢弃", "num"], ["sampled_out", "采样丢弃", "num"], ["flow_table_full", "流表满", "num"],
+        ["midstream_flows", "中途流", "num"], ["tls_incomplete", "TLS 不完整", "num"], ["tls_malformed", "TLS 畸形", "num"],
+        ["reasm_conflict", "重组冲突", "num"], ["reasm_overflow", "重组溢出", "num"], ["cap_truncated", "截断", "num"],
+        ["assoc_unmatched", "未关联", "num"], ["assoc_ambiguous", "关联歧义", "num"], ["pending_logs_expired", "日志过期", "num"],
+        ["pending_logs_dropped", "日志丢弃", "num"], ["late_corrections", "迟到修订", "num"], ["parse_errors", "解析错误", "num"],
         ["sink_sent", "已上传", "num"], ["sink_pending", "待上传", "num"], ["sink_chan_dropped", "通道丢弃", "num"],
         ["sink_buffer_dropped", "缓冲丢弃", "num"], ["sink_send_errors", "上传错误", "num"], ["sink_last_error", "最近错误", "wrap"],
       ], { empty: "还没有采集器上报状态（每分钟一次）" });

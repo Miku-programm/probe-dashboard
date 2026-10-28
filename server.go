@@ -124,8 +124,7 @@ func (s *Server) handleNamed(w http.ResponseWriter, r *http.Request) {
 	params.Set("param_bucket", strconv.Itoa(bucketFor(hours)))
 	params.Set("param_ip", qs.Get("ip"))
 	where := "ts >= now64(3) - toIntervalHour({hours:UInt32}) AND ({node:String} = '' OR node = {node:String})"
-	q = strings.ReplaceAll(q, "{T}", s.table)
-	q = strings.ReplaceAll(q, "{W}", where)
+	q = expandQuery(q, s.table, where)
 	s.query(r.Context(), w, q+"\nFORMAT JSON", params)
 }
 

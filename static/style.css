@@ -158,8 +158,8 @@ a.ip:hover { text-decoration: underline; }
   border: 1px solid var(--border);
 }
 .badge.cn, .badge.none, .badge.closed { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 50%, transparent); }
-.badge.accepted { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); }
-.badge.rejected, .badge.listen { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
+.badge.accepted, .badge.matched { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); }
+.badge.rejected, .badge.listen, .badge.unknown, .badge.unmatched, .badge.ambiguous { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
 .badge.node { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
 
 .empty, .loading, .error { padding: 24px; text-align: center; color: var(--muted); }

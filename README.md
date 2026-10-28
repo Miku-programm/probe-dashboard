@@ -20,6 +20,18 @@ v2node 节点（开启 ProbeLog） ──写入──► ClickHouse: v2node.prob
 
 两者是独立的程序，代码互不依赖，可以部署在不同机器上；但面板的查询是按 v2node 写入的表结构和字段含义编写的，不能用于其他数据源。升级时请保持两边版本对应：v2node 的表结构有变化时，面板需要同步更新。
 
+## 版本对应
+
+| probe-dashboard | v2node ProbeLog 表结构 |
+|---|---|
+| 当前版本 | `schema_version` 2（需要 `flow_id`、`revision`、`emitted_at`、`tls_state`、`auth_assoc` 等列） |
+
+- 旧表（v2node 第一版 ProbeLog 建的表）先执行 v2node 的 [`probelog/migrations/002_v2.sql`](https://github.com/Miku-programm/v2node/blob/main/probelog/migrations/002_v2.sql)，否则查询会因缺列报错。
+- 一个连接可能有多条记录（`snapshot` / `final` / `correction`），面板所有连接统计都先按 `flow_id` 取 `revision` 最大的一行再计数；v1 旧行没有 `flow_id`，每行单独计。
+- “未关联认证”= `auth` 不是 `accepted` / `not_applicable`（包括 v2 的 `unknown`、`rejected` 和 v1 的 `none`）。它只表示没观察到认证成功，不等于主动探测，更不等于 GFW。
+- SNI / JA4 只用 `tls_state = complete` 的行（v1 旧行按原样显示）。
+- “相同客户端前缀”页用重组后的 `prefix_len:prefix_hash`，并排除重组冲突的连接；v1 旧行退回首段哈希。
+
 ## 使用步骤
 
 1. 部署 ClickHouse，用 v2node 仓库的 [`probelog/schema.sql`](https://github.com/Miku-programm/v2node/blob/main/probelog/schema.sql) 建表，并按文件末尾示例创建写入账号和只读账号。
