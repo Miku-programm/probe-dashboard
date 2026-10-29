@@ -24,13 +24,14 @@ v2node 节点（开启 ProbeLog） ──写入──► ClickHouse: v2node.prob
 
 | probe-dashboard | v2node ProbeLog 表结构 |
 |---|---|
-| 当前版本 | `schema_version` 3（需要 `flow_id`、`revision`、`emitted_at`、`tls_state`、`auth_assoc`、`prefix_stop`、`hs_flags` 等列） |
+| 当前版本 | `schema_version` 4（需要 `flow_id`、`revision`、`emitted_at`、`tls_state`、`auth_assoc`、`prefix_stop`、`hs_flags`、`quic_initial`、`quic_sni_first`、`quic_initials` 等列） |
 
-- 旧表先升级，否则查询会因缺列报错：v1 表（v2node 第一版 ProbeLog 建的表）依次执行 v2node 的 [`probelog/migrations/002_v2.sql`](https://github.com/Miku-programm/v2node/blob/main/probelog/migrations/002_v2.sql)、[`003_v3.sql`](https://github.com/Miku-programm/v2node/blob/main/probelog/migrations/003_v3.sql)；v2 表只执行 `003_v3.sql`。
+- 旧表先升级，否则查询会因缺列报错：v1 表（v2node 第一版 ProbeLog 建的表）依次执行 v2node 的 [`probelog/migrations/002_v2.sql`](https://github.com/Miku-programm/v2node/blob/main/probelog/migrations/002_v2.sql)、[`003_v3.sql`](https://github.com/Miku-programm/v2node/blob/main/probelog/migrations/003_v3.sql)、`004_quic.sql`；v2 表执行 `003_v3.sql`、`004_quic.sql`；v3 表只执行 [`004_quic.sql`](https://github.com/Miku-programm/v2node/blob/main/probelog/migrations/004_quic.sql)。
 - 一个连接可能有多条记录（`snapshot` / `final` / `correction`），面板所有连接统计都先按 `flow_id` 取 `revision` 最大的一行再计数；v1 旧行没有 `flow_id`，每行单独计。
 - “未关联认证”= `auth` 不是 `accepted` / `not_applicable`（包括 v2 的 `unknown`、`rejected` 和 v1 的 `none`）。它只表示没观察到认证成功，不等于主动探测，更不等于 GFW。
 - SNI / JA4 只用可比较的 TLS 样本，与 v2node `probelog/README.md`「可比较样本的统一门槛」一致：v3 行要求 `tls_state = complete`（ClientHello 内有重叠冲突的是 `conflict`，没有指纹）；v2 行另外排除 `reasm_flags` 含 `conflict` 的行；v1 旧行按原样显示。
 - “相同客户端前缀”页用重组后的 `prefix_len:prefix_hash`，并排除重组冲突的连接。v3 前缀覆盖范围只由 `prefix_stop` 决定；v2 前缀取决于 TCP 分段，按版本分开分组，不与 v3 混合；v1 旧行退回首段哈希。短前缀区分度低，按长度分层看。
+- UDP 页显示 QUIC 客户端 Initial 的解析结果（v4 行）：SNI、JA4（以 `q` 开头）、SNI 落在第一个数据报里的程度（`quic_sni_first`），以及是否满足 GFW 的源端口 > 目的端口检查条件。
 - “握手”列：`established` 是核对过 ACK 的证据，`inferred` 只是推定；v2 行的 `established` 没有核对 ACK。
 
 ## 使用步骤

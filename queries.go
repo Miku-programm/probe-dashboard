@@ -2,7 +2,7 @@ package main
 
 import "strings"
 
-// 面板使用的命名查询（要求 v2node probe_events 表为 schema_version 3：v1 表依次执行 v2node 的 migrations/002_v2.sql、003_v3.sql，v2 表执行 003_v3.sql）。
+// 面板使用的命名查询（要求 v2node probe_events 表为 schema_version 4：旧表按顺序执行 v2node 的 migrations/002_v2.sql、003_v3.sql、004_quic.sql 中尚未执行的部分）。
 //
 // 占位符：
 //   - {T}  表名
@@ -180,8 +180,11 @@ FROM (
 )
 GROUP BY geo ORDER BY ips DESC`,
 
+	// QUIC 字段只有 v4 行才有；gfw_inspects 对应论文中 GFW 只检查源端口 > 目的端口的规则
 	"udp": `SELECT ts, node, flow_id, src_ip, src_port, src_geo, dst_port, port_state, node_type, ttl,
   payload_len, payload_truncated, round(entropy, 2) AS entropy, payload_head, payload_hash, quic_ver,
+  quic_initial, if({TLSOK}, tls_sni, '') AS tls_sni, if({TLSOK}, ja4, '') AS ja4, quic_sni_first, quic_initials,
+  src_port > dst_port AS gfw_inspects,
   flow_ms, flow_pkts, flow_bytes, flow_end, auth, auth_assoc
 FROM {F} WHERE kind = 'udp_flow' AND auth != 'accepted'
 ORDER BY ts DESC LIMIT {limit:UInt32}`,

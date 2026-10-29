@@ -339,10 +339,12 @@ const TABS = [
     id: "udp",
     title: "UDP",
     async render(p) {
-      p.innerHTML = section("未认证 UDP 流", "到节点 UDP 端口（hysteria2 / tuic）以及低端口的 UDP 首包。QUIC 长包头会解析出版本号。", '<div id="t1"></div>');
+      p.innerHTML = section("未认证 UDP 流", "到节点 UDP 端口（hysteria2 / tuic）以及低端口的 UDP 首包。QUIC v1/v2 客户端 Initial 会被解密（任何路径上的观察者都能做到，GFW 也是这样按 SNI 封锁 QUIC 的）：SNI/JA4 来自 ClientHello；“SNI 首包”表示 SNI 落在第一个数据报里的程度，full 是 GFW 能读到的情形，partial/none 通常是客户端做了 SNI 切片；“GFW 检查”为源端口 > 目的端口。只有 Initial、之后没有包的流是被切断的候选，不能单凭它认定封锁。", '<div id="t1"></div>');
       renderTable($("#t1"), await q("udp", { limit: 500 }), [
         ["ts", "时间", "time"], ["src_ip", "来源", "ip"], ["src_geo", "地区", "badge"], ["node", "节点"], ["dst_port", "端口", "num"],
-        ["port_state", "端口", "badge"], ["node_type", "类型"], ["quic_ver", "QUIC"], ["payload_len", "首包", "num"], ["entropy", "熵", "num"],
+        ["port_state", "端口", "badge"], ["node_type", "类型"], ["quic_ver", "QUIC"], ["quic_initial", "Initial", "badge"], ["tls_sni", "SNI"],
+        ["quic_sni_first", "SNI 首包", "badge"], ["quic_initials", "Initial 数", "num"], ["gfw_inspects", "GFW 检查", "num"], ["ja4", "JA4", "mono"],
+        ["payload_len", "首包", "num"], ["entropy", "熵", "num"],
         ["payload_head", "首包 hex", "hex"], ["flow_pkts", "包", "num"], ["flow_bytes", "字节", "num"], ["flow_ms", "时长ms", "num"], ["flow_end", "结束"],
       ]);
     },
@@ -429,7 +431,7 @@ const TABS = [
         ["node", "节点"], ["last_seen", "最近上报", "time"], ["direction", "观测"], ["capture", "抓包"], ["sink_schema", "表结构", "wrap"],
         ["packets", "抓包数", "num"], ["kernel_drops", "内核丢包"], ["emitted", "事件", "num"], ["flows", "当前流", "num"],
         ["rate_dropped", "限速丢弃", "num"], ["sampled_out", "采样丢弃", "num"], ["flow_table_full", "流表满", "num"],
-        ["midstream_flows", "中途流", "num"], ["tls_incomplete", "TLS 不完整", "num"], ["tls_malformed", "TLS 畸形", "num"], ["tls_conflict", "TLS 冲突", "num"],
+        ["midstream_flows", "中途流", "num"], ["tls_incomplete", "TLS 不完整", "num"], ["tls_malformed", "TLS 畸形", "num"], ["tls_conflict", "TLS 冲突", "num"], ["quic_initials", "QUIC 解析", "num"],
         ["reasm_conflict", "重组冲突", "num"], ["reasm_overflow", "重组溢出", "num"], ["cap_truncated", "截断", "num"],
         ["assoc_unmatched", "未关联", "num"], ["assoc_ambiguous", "关联歧义", "num"], ["pending_logs_expired", "日志过期", "num"],
         ["pending_logs_dropped", "日志丢弃", "num"], ["late_corrections", "迟到修订", "num"], ["parse_errors", "解析错误", "num"],
